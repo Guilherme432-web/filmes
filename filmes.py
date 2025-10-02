@@ -1,43 +1,40 @@
 import boto3
-:dynamodb = boto3.resource(
-    'dynamodb',
-    region_name='us-east-1',  # substitua pela sua região
-    aws_access_key_id='SUA_ACCESS_KEY',
-    aws_secret_access_key='SUA_SECRET_KEY'
-)
-table = dynamodb.Table('User  Profiles')
+import os
+from botocore.exceptions import ClientError
 
-def get_user_profile(user_id):
-    params = {
-        'Key': {
-            'PK': f'USER#{user_id}',
-            'SK': 'PROFILE'
-        }
-    }
-    response = table.get_item(**params)
-    return response.get('Item')
 
-def get_user_movie_ranking(user_id):
-    params = {
-        'KeyConditionExpression': 'PK = :pk and begins_with(SK, :skPrefix)',
-        'ExpressionAttributeValues': {
-            ':pk': f'USER#{user_id}',
-            ':skPrefix': 'MOVIE#'
-        }
-    }
-    response = table.query(**params)
-    return response.get('Items', [])
-
-# Configuração do DynamoDB (coloque suas credenciais aqui ou use variáveis de ambiente)
 dynamodb = boto3.resource(
     'dynamodb',
-    region_name='us-east-1',  # substitua pela sua região
-    aws_access_key_id='SUA_ACCESS_KEY',
-    aws_secret_access_key='SUA_SECRET_KEY'
+    region_name=os.getenv('AWS_DEFAULT_REGION', 'us-east-1')
 )
 
-table = dynamodb.Table('User   Profiles')
+TABLE_NAME = 'User_Profiles'
+table = dynamodb.Table(TABLE_NAME)
 
+def create_table_if_not_exists():
+    try:
+        dynamodb.meta.client.describe_table(TableName=TABLE_NAME)
+        print(f"✅ Tabela '{TABLE_NAME}' já existe.")
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            print(f" Criando tabela '{TABLE_NAME}'...")
+            table = dynamodb.create_table(
+                TableName=TABLE_NAME,
+                KeySchema=[
+                    {'AttributeName': 'PK', 'KeyType': 'HASH'},
+                    {'AttributeName': 'SK', 'KeyType': 'RANGE'}
+                ],
+                AttributeDefinitions=[
+                    {'AttributeName': 'PK', 'AttributeType': 'S'},
+                    {'AttributeName': 'SK', 'AttributeType': 'S'}
+                ],
+                BillingMode='PAY_PER_REQUEST'
+            )
+            table.wait_until_exists()
+            print(f"✅ Tabela '{TABLE_NAME}' criada com sucesso!")
+        else:
+            raise
+        
 def create_user_profile(user_id, nome, idade):
     item = {
         'PK': f'USER#{user_id}',
@@ -49,13 +46,12 @@ def create_user_profile(user_id, nome, idade):
     return item
 
 def get_user_profile(user_id):
-    params = {
-        'Key': {
+    response = table.get_item(
+        Key={
             'PK': f'USER#{user_id}',
             'SK': 'PROFILE'
         }
-    }
-    response = table.get_item(**params)
+    )
     return response.get('Item')
 
 def update_user_profile(user_id, nome=None, idade=None):
@@ -70,26 +66,23 @@ def update_user_profile(user_id, nome=None, idade=None):
         expression_attribute_values[':i'] = idade
 
     if not update_expression:
-        return None  # Nada para atualizar
-
-    update_expr = 'SET ' + ', '.join(update_expression)
+        return None
 
     response = table.update_item(
         Key={
             'PK': f'USER#{user_id}',
             'SK': 'PROFILE'
         },
-        UpdateExpression=update_expr,
+        UpdateExpression='SET ' + ', '.join(update_expression),
         ExpressionAttributeValues=expression_attribute_values,
         ReturnValues='ALL_NEW'
     )
     return response.get('Attributes')
 
 def delete_user_profile(user_id):
-    response = table.delete_item(
+    table.delete_item(
         Key={
             'PK': f'USER#{user_id}',
             'SK': 'PROFILE'
         }
     )
-    return response
